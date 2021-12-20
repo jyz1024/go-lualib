@@ -30,10 +30,11 @@ var (
 // redigo lua lib
 // inner script
 const (
-	ScriptCAS  = "CAS"  // compare and swap
-	ScriptCAD  = "CAD"  // compare and delete
-	ScriptHINC = "HINC" // hinc with check zero
-	ScriptINC  = "INC"  // inc with check zero
+	ScriptCAS   = "CAS"   // compare and swap
+	ScriptCAD   = "CAD"   // compare and delete
+	ScriptHINC  = "HINC"  // hinc with check zero
+	ScriptINC   = "INC"   // inc with check zero
+	ScriptHMINC = "HMINC" // hminc with check zero
 
 	scriptNum = 1 << 4
 )
@@ -48,6 +49,7 @@ type libManager struct {
 
 type scriptInfo struct {
 	KeyNumbers int
+	Script     string
 	Sha1       interface{} // []uint8
 }
 
@@ -141,6 +143,10 @@ func loadInnerScript() {
 	if err != nil {
 		panic("load script error:" + ScriptINC + ":" + err.Error())
 	}
+	err = evalLoadScript(ScriptHMINC, hmIncrByScript, 1)
+	if err != nil {
+		panic("load script error:" + ScriptHMINC + err.Error())
+	}
 }
 
 // evalLoadScript 加载lua脚本到内存
@@ -155,7 +161,7 @@ func evalLoadScript(scriptKey string, script string, keyNumbers int) (err error)
 	if err != nil {
 		return err
 	}
-	libM.scriptMap[scriptKey] = scriptInfo{Sha1: scriptSha1, KeyNumbers: keyNumbers}
+	libM.scriptMap[scriptKey] = scriptInfo{Sha1: scriptSha1, KeyNumbers: keyNumbers, Script: script}
 	return nil
 }
 
@@ -178,6 +184,16 @@ func CallScript(scriptKey string, argv ...interface{}) (interface{}, error) {
 		return nil, errors.New("script not loaded:" + scriptKey)
 	}
 	libM.lock.RUnlock()
+
+	// 检查脚本是否存在，若不存在，重新load
+	_, err := libM.Do("SCRIPT", " EXISTS", script.Sha1)
+	if err != nil {
+		DelScript(scriptKey)
+		err = RegisterScript(scriptKey, script.Script, script.KeyNumbers)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	args := make([]interface{}, 0, len(argv)+2)
 	args = append(args, script.Sha1, script.KeyNumbers)
@@ -232,6 +248,17 @@ func HIncrBy(key string, field string, increment interface{}) (interface{}, erro
 // Inc 限制不能减到负值，不足时返回err == ErrInsufficient
 func Inc(key string, increment interface{}) (interface{}, error) {
 	return wrapErr(CallScript(ScriptINC, key, increment))
+}
+
+func HMIncrBy(key string, fields []interface{}, increments []interface{}) (interface{}, error) {
+	if len(fields) != len(increments) {
+		return nil, errors.New("field not match increment")
+	}
+	argv := make([]interface{}, 0, len(fields)*2+1)
+	argv = append(argv, key)
+	argv = append(argv, fields...)
+	argv = append(argv, increments...)
+	return wrapErr(CallScript(ScriptHMINC, argv...))
 }
 
 // Lock err == nil: lock success

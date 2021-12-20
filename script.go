@@ -59,3 +59,44 @@ const strIncrByScript = `
 		end
 	end
 `
+
+const hmIncrByScript = `
+	local fieldsNum = #ARGV
+	if fieldsNum == 0 then 
+		return {}
+	end
+	local argvTable = {}
+	table.insert(argvTable,"HMGet")
+	table.insert(argvTable,KEYS[1])
+	for k,v in pairs(ARGV) do 
+		if k > fieldsNum / 2 then
+			break
+		end
+		table.insert(argvTable,v)
+	end
+	local getValList = redis.call(unpack(argvTable))
+	assert(type(getValList)=="table","error insufficient")
+	local index = 1
+	local fieldsTable = {}
+	local resTable = {}
+	table.insert(fieldsTable,"HMSet")
+	table.insert(fieldsTable,KEYS[1])
+	for i=fieldsNum/2+1,fieldsNum,1 do
+		local increment = tonumber(ARGV[i])
+		assert(type(increment)=="number","increment type error")
+		local getVal = tonumber(getValList[index])
+		assert(type(getVal)=="number","error insufficient")
+		if increment < 0 then 
+			if getVal + increment < 0 then 
+				return error("error insufficient",0)
+			end
+		end
+		table.insert(fieldsTable,ARGV[index])
+		table.insert(fieldsTable,getVal+increment)
+		table.insert(resTable,getVal+increment)
+		index = index + 1
+	end
+	local hmSetRes = redis.call(unpack(fieldsTable))
+	assert(type(hmSetRes)=="table","incr error")
+	return resTable
+`
